@@ -1,0 +1,168 @@
+# render.yaml - Addiction Tracking System Deployment
+services:
+  # Backend API Service
+  - type: web
+    name: atis-backend
+    runtime: node
+    region: ohio
+    buildCommand: npm install && npm run build
+    startCommand: node server.js
+    env: node
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGO_URI
+        value: ${MONGO_ATLAS_URI}
+      - key: JWT_SECRET
+        value: ${JWT_SECRET}
+      - key: ENCRYPTION_SECRET
+        value: ${ENCRYPTION_SECRET}
+      - key: AWS_ACCESS_KEY_ID
+        value: ${AWS_ACCESS_KEY}
+      - key: AWS_SECRET_ACCESS_KEY
+        value: ${AWS_SECRET_KEY}
+      - key: REDIS_URL
+        value: ${REDIS_URL}
+    plan: standard
+    instanceCount: 2
+    autoDeploy: true
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 10
+
+  # Web Dashboard Service
+  - type: web
+    name: atis-dashboard
+    runtime: node
+    region: ohio
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    env: node
+    healthCheckPath: /health
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://atis-backend.onrender.com
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://atis-backend.onrender.com
+      - key: AUTH_SECRET
+        value: ${AUTH_SECRET}
+      - key: NEXTAUTH_URL
+        value: https://atis-dashboard.onrender.com
+    plan: standard
+    instanceCount: 2
+    autoDeploy: true
+
+  # Redis Service
+  - type: redis
+    name: atis-redis
+    region: ohio
+    plan: standard
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+    autoDeploy: true
+
+  # Background Worker Service
+  - type: worker
+    name: atis-worker
+    runtime: node
+    region: ohio
+    buildCommand: npm install
+    startCommand: node worker.js
+    envVars:
+      - key: MONGO_URI
+        value: ${MONGO_ATLAS_URI}
+      - key: AWS_ACCESS_KEY_ID
+        value: ${AWS_ACCESS_KEY}
+      - key: AWS_SECRET_ACCESS_KEY
+        value: ${AWS_SECRET_KEY}
+      - key: REDIS_URL
+        value: ${REDIS_URL}
+    plan: standard
+    autoDeploy: true
+
+  # Machine Learning Service (Python)
+  - type: web
+    name: atis-ml
+    runtime: python
+    region: ohio
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn ml_api:app
+    envVars:
+      - key: MODEL_PATH
+        value: /opt/render/project/src/relapse_model.pkl
+      - key: API_KEY
+        value: ${ML_API_KEY}
+    plan: standard
+    instanceCount: 1
+    autoDeploy: true
+
+databases:
+  # Main PostgreSQL Database
+  - name: atis-postgres
+    region: ohio
+    plan: standard
+    databaseName: atis_prod
+    user: atis_admin
+    ipAllowList: []
+    terminationProtection: true
+
+  # MongoDB Database (Atlas)
+  - name: atis-mongodb
+    region: aws-us-east-1
+    plan: standard
+    databaseName: atis_main
+    user: atis_user
+    ipAllowList: []
+    terminationProtection: true
+
+# Environment Variables Group
+envGroups:
+  - name: atis-secrets
+    envVars:
+      - key: MONGO_ATLAS_URI
+        value: mongodb+srv://${MONGO_USER}:${MONGO_PASS}@cluster.mongodb.net/atisdb?retryWrites=true&w=majority
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_SECRET
+        value: ${ENCRYPTION_SECRET_32_CHARS}
+      - key: AWS_ACCESS_KEY
+        value: ${AWS_ACCESS_KEY_ID}
+      - key: AWS_SECRET_KEY
+        value: ${AWS_SECRET_ACCESS_KEY}
+      - key: REDIS_URL
+        value: redis://${REDIS_USER}:${REDIS_PASS}@redis-host:6379
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: ML_API_KEY
+        generateValue: true
+      - key: HIPAA_COMPLIANCE_MODE
+        value: strict
+
+# Cron Jobs
+jobs:
+  - name: nightly-backup
+    plan: standard
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    command: node scripts/backup.js
+    envVars:
+      - key: AWS_BUCKET
+        value: atis-backups-prod
+
+  - name: model-retraining
+    plan: standard
+    schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+    command: python scripts/retrain_model.py
+    envVars:
+      - key: TRAINING_DATA_URL
+        value: s3://atis-data/training.csv
+
+# Volume for ML model storage
+volumes:
+  - name: ml-models
+    mountPath: /models
+    plan: standard
+    sizeGB: 5
+    attachedTo:
+      - service: atis-ml
