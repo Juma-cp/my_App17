@@ -1,84 +1,58 @@
-# render.yaml - Addiction Tracking System Deployment
 services:
   # Backend API Service
   - type: web
     name: atis-backend
     runtime: node
-    region: ohio
     buildCommand: npm install && npm run build
     startCommand: node server.js
     env: node
+    region: ohio
     healthCheckPath: /health
     envVars:
-      - key: NODE_ENV
-        value: production
-      - key: MONGO_URI
-        value: ${MONGO_ATLAS_URI}
-      - key: JWT_SECRET
-        value: ${JWT_SECRET}
-      - key: ENCRYPTION_SECRET
-        value: ${ENCRYPTION_SECRET}
-      - key: AWS_ACCESS_KEY_ID
-        value: ${AWS_ACCESS_KEY}
-      - key: AWS_SECRET_ACCESS_KEY
-        value: ${AWS_SECRET_KEY}
-      - key: REDIS_URL
-        value: ${REDIS_URL}
+      - fromGroup: atis-secrets
     plan: standard
-    instanceCount: 2
     autoDeploy: true
     disk:
       name: data
       mountPath: /data
       sizeGB: 10
 
-  # Web Dashboard Service
+  # Web Dashboard (Frontend)
   - type: web
     name: atis-dashboard
     runtime: node
-    region: ohio
     buildCommand: npm install && npm run build
     startCommand: npm start
     env: node
+    region: ohio
     healthCheckPath: /health
     envVars:
       - key: NEXT_PUBLIC_API_URL
         value: https://atis-backend.onrender.com
       - key: NEXT_PUBLIC_WS_URL
         value: wss://atis-backend.onrender.com
-      - key: AUTH_SECRET
-        value: ${AUTH_SECRET}
-      - key: NEXTAUTH_URL
-        value: https://atis-dashboard.onrender.com
+      - fromGroup: atis-secrets
     plan: standard
-    instanceCount: 2
     autoDeploy: true
 
-  # Redis Service
+  # Redis Cache
   - type: redis
     name: atis-redis
     region: ohio
     plan: standard
     maxmemoryPolicy: allkeys-lru
     ipAllowList: []
-    autoDeploy: true
 
-  # Background Worker Service
+  # Background Worker
   - type: worker
     name: atis-worker
     runtime: node
-    region: ohio
     buildCommand: npm install
     startCommand: node worker.js
+    region: ohio
+    env: node
     envVars:
-      - key: MONGO_URI
-        value: ${MONGO_ATLAS_URI}
-      - key: AWS_ACCESS_KEY_ID
-        value: ${AWS_ACCESS_KEY}
-      - key: AWS_SECRET_ACCESS_KEY
-        value: ${AWS_SECRET_KEY}
-      - key: REDIS_URL
-        value: ${REDIS_URL}
+      - fromGroup: atis-secrets
     plan: standard
     autoDeploy: true
 
@@ -86,20 +60,22 @@ services:
   - type: web
     name: atis-ml
     runtime: python
-    region: ohio
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn ml_api:app
+    region: ohio
     envVars:
+      - fromGroup: atis-secrets
       - key: MODEL_PATH
-        value: /opt/render/project/src/relapse_model.pkl
-      - key: API_KEY
-        value: ${ML_API_KEY}
+        value: /models/relapse_model.pkl
     plan: standard
-    instanceCount: 1
     autoDeploy: true
+    disk:
+      name: ml-models
+      mountPath: /models
+      sizeGB: 5
 
 databases:
-  # Main PostgreSQL Database
+  # PostgreSQL for structured data
   - name: atis-postgres
     region: ohio
     plan: standard
@@ -108,7 +84,7 @@ databases:
     ipAllowList: []
     terminationProtection: true
 
-  # MongoDB Database (Atlas)
+  # MongoDB for document storage
   - name: atis-mongodb
     region: aws-us-east-1
     plan: standard
@@ -117,7 +93,6 @@ databases:
     ipAllowList: []
     terminationProtection: true
 
-# Environment Variables Group
 envGroups:
   - name: atis-secrets
     envVars:
@@ -126,13 +101,13 @@ envGroups:
       - key: JWT_SECRET
         generateValue: true
       - key: ENCRYPTION_SECRET
-        value: ${ENCRYPTION_SECRET_32_CHARS}
-      - key: AWS_ACCESS_KEY
-        value: ${AWS_ACCESS_KEY_ID}
-      - key: AWS_SECRET_KEY
-        value: ${AWS_SECRET_ACCESS_KEY}
+        generateValue: true
+      - key: AWS_ACCESS_KEY_ID
+        value: your-access-key
+      - key: AWS_SECRET_ACCESS_KEY
+        value: your-secret-key
       - key: REDIS_URL
-        value: redis://${REDIS_USER}:${REDIS_PASS}@redis-host:6379
+        value: redis://default:@atis-redis:6379
       - key: AUTH_SECRET
         generateValue: true
       - key: ML_API_KEY
@@ -140,29 +115,23 @@ envGroups:
       - key: HIPAA_COMPLIANCE_MODE
         value: strict
 
-# Cron Jobs
 jobs:
+  # Nightly Backup Job
   - name: nightly-backup
     plan: standard
-    schedule: "0 2 * * *"  # Daily at 2 AM
+    schedule: "0 2 * * *"
     command: node scripts/backup.js
     envVars:
       - key: AWS_BUCKET
         value: atis-backups-prod
+      - fromGroup: atis-secrets
 
+  # Weekly ML Retraining
   - name: model-retraining
     plan: standard
-    schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+    schedule: "0 3 * * 0"
     command: python scripts/retrain_model.py
     envVars:
       - key: TRAINING_DATA_URL
         value: s3://atis-data/training.csv
-
-# Volume for ML model storage
-volumes:
-  - name: ml-models
-    mountPath: /models
-    plan: standard
-    sizeGB: 5
-    attachedTo:
-      - service: atis-ml
+      - fromGroup: atis-secrets
