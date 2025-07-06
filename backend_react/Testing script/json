@@ -1,0 +1,66 @@
+{
+  "info": {
+    "name": "ATIS API Tests",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Patient Log Submission",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const moment = require('moment');",
+              "pm.globals.set('current_timestamp', moment().format());"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": JSON.stringify({
+            "patientId": "PATIENT_123",
+            "cravings": 8,
+            "mood": 3,
+            "stress": 9,
+            "location": {
+              "lat": 37.7749,
+              "lng": -122.4194
+            },
+            "notes": "Passed by liquor store on way home"
+          }, null, 2)
+        },
+        "url": "https://localhost/api/v1/patients/logs"
+      },
+      "response": []
+    },
+    {
+      "name": "High-Risk Alert Check",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{auth_token}}"
+          }
+        ],
+        "url": "https://localhost/api/v1/alerts?patientId=PATIENT_123"
+      },
+      "response": []
+    }
+  ]
+          }
